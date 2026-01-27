@@ -16,8 +16,8 @@ c.execute('''CREATE TABLE IF NOT EXISTS alunos
 conn.commit()
 
 # --- ABA ESCOLA ---
-st.sidebar.title("Navegação")
-escolha = st.sidebar.radio("Ir para:", ["Escola (Cadastro)", "Supervisor (Validação)"])
+# Mude esta linha para incluir "Relatórios"
+escolha = st.sidebar.radio("Ir para:", ["Escola (Cadastro)", "Supervisor (Validação)", "Relatórios"])
 
 if escolha == "Escola (Cadastro)":
     st.title("🏫 Cadastro de Aluno")
@@ -61,3 +61,23 @@ elif escolha == "Supervisor (Validação)":
             st.rerun()
     else:
         st.info("Nenhuma pendência no momento.")
+
+# --- ABA RELATÓRIOS ---
+elif escolha == "Relatórios":
+    st.title("📊 Relatório Geral de Transportes")
+
+    # Busca todos os dados no banco
+    df_relatorio = pd.read_sql("SELECT rowid, nome, cpf, status FROM alunos", conn)
+
+    # Mostra a tabela na tela
+    st.dataframe(df_relatorio)
+
+    # Botão para baixar a planilha (CSV)
+    csv = df_relatorio.to_csv(index=False).encode('utf-8')
+    st.download_button(
+        label="📥 Baixar Relatório em Excel (CSV)",
+        data=csv,
+        file_name='relatorio_transporte.csv',
+        mime='text/csv',
+    )
+
