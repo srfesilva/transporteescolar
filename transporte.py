@@ -150,9 +150,8 @@ if menu == "Escola (Solicitação)":
                 st.success(f"Solicitação para o aluno {nome} enviada com sucesso!")
             else:
                 st.error("Por favor, preencha os campos obrigatórios e anexe os documentos.")
-
 # ---------------------------------------------------------------------
-# ABA 2: SUPERVISOR (AVALIAÇÃO)
+# ABA 2: SUPERVISOR (AVALIAÇÃO) - CORRIGIDA
 # ---------------------------------------------------------------------
 elif menu == "Supervisor (Avaliação)":
     st.title("📋 Avaliação do Supervisor / PEC")
@@ -166,92 +165,100 @@ elif menu == "Supervisor (Avaliação)":
     df_pendentes = pd.read_sql("SELECT id, nome_aluno, status FROM solicitacoes WHERE status='Pendente'", conn)
     
     if not df_pendentes.empty:
-        aluno_selecionado = st.selectbox("Selecione um Aluno para Avaliar:", df_pendentes['nome_aluno'])
+        # TRUQUE PARA EVITAR ERRO: Criamos uma lista combinando "ID - Nome"
+        # Assim garantimos que o sistema pegue o ID correto mesmo se houver nomes iguais
+        opcoes_alunos = df_pendentes.apply(lambda x: f"{x['id']} - {x['nome_aluno']}", axis=1)
         
-        # Pegar ID do aluno selecionado
-        id_aluno = df_pendentes[df_pendentes['nome_aluno'] == aluno_selecionado].iloc[0]['id']
+        escolha = st.selectbox("Selecione um Aluno para Avaliar:", opcoes_alunos)
         
-        # Buscar dados completos do aluno
-        c.execute("SELECT * FROM solicitacoes WHERE id=?", (id_aluno,))
+        # Aqui separamos o número (ID) do texto. Ex: Pega "1" de "1 - João"
+        id_aluno_selecionado = int(escolha.split(' - ')[0])
+        
+        # Buscar dados completos do aluno usando o ID numérico garantido
+        c.execute("SELECT * FROM solicitacoes WHERE id=?", (id_aluno_selecionado,))
         dados = c.fetchone()
-        # Mapeando colunas pelo índice (baseado na ordem de criação da tabela ou row_factory)
-        # 1=nome, 2=cpf, 3=ra, 4=cadeirante, 5=cid, 7=endereço, ...
         
-        st.markdown("---")
-        col_detalhes1, col_detalhes2 = st.columns(2)
-        
-        with col_detalhes1:
-            st.markdown(f"**Aluno:** {dados[1]}")
-            st.markdown(f"**CPF:** {dados[2]}")
-            st.markdown(f"**R.A.:** {dados[3]}")
-            st.markdown(f"**Cadeirante:** {dados[4]}")
-            st.markdown(f"**CID:** {dados[5]}")
-            st.markdown(f"**Endereço:** {dados[7]}")
+        # VERIFICAÇÃO DE SEGURANÇA (Se dados existir, mostra. Se não, avisa)
+        if dados:
+            st.markdown("---")
+            col_detalhes1, col_detalhes2 = st.columns(2)
             
-        with col_detalhes2:
-            st.markdown(f"**Escola:** {dados[8]}")
-            st.markdown(f"**Sala Recurso:** {dados[10]}")
-            st.markdown(f"**Dias:** {dados[11]}")
-            st.markdown(f"**Horários:** {dados[12]}")
+            # Nota: dados[0] é id, dados[1] é nome, etc.
+            with col_detalhes1:
+                st.markdown(f"**Aluno:** {dados[1]}")
+                st.markdown(f"**CPF:** {dados[2]}")
+                st.markdown(f"**R.A.:** {dados[3]}")
+                st.markdown(f"**Cadeirante:** {dados[4]}")
+                st.markdown(f"**CID:** {dados[5]}")
+                st.markdown(f"**Endereço:** {dados[7]}")
+                
+            with col_detalhes2:
+                st.markdown(f"**Escola:** {dados[8]}")
+                st.markdown(f"**Sala Recurso:** {dados[10]}")
+                st.markdown(f"**Dias:** {dados[11]}")
+                st.markdown(f"**Horários:** {dados[12]}")
 
-        st.markdown("### 📂 Documentos do Aluno")
-        col_docs1, col_docs2 = st.columns(2)
-        
-        # Botões de Download
-        if dados[13]: # Arquivo Medico
-            col_docs1.download_button(label=f"⬇️ Baixar Ficha Médica", 
-                                      data=dados[13], 
-                                      file_name=dados[14] or "ficha_medica.pdf")
-        
-        if dados[15]: # Arquivo Viagem
-            col_docs2.download_button(label=f"⬇️ Baixar Ficha Viagem", 
-                                      data=dados[15], 
-                                      file_name=dados[16] or "ficha_viagem.pdf")
+            st.markdown("### 📂 Documentos do Aluno")
+            col_docs1, col_docs2 = st.columns(2)
+            
+            # Botões de Download com verificação de erro
+            if dados[13]: # Arquivo Medico
+                col_docs1.download_button(label=f"⬇️ Baixar Ficha Médica", 
+                                          data=dados[13], 
+                                          file_name=dados[14] or "ficha_medica.pdf",
+                                          key=f"btn_med_{id_aluno_selecionado}") # Key única para não travar
+            
+            if dados[15]: # Arquivo Viagem
+                col_docs2.download_button(label=f"⬇️ Baixar Ficha Viagem", 
+                                          data=dados[15], 
+                                          file_name=dados[16] or "ficha_viagem.pdf",
+                                          key=f"btn_via_{id_aluno_selecionado}")
 
-        st.markdown("---")
-        st.subheader("Decisão do Supervisor")
-        
-        with st.form("form_validacao"):
-            decisao = st.radio("Parecer Final:", ["Aprovar Solicitação", "Reprovar Solicitação"])
+            st.markdown("---")
+            st.subheader("Decisão do Supervisor")
             
-            motivo = None
-            if decisao == "Reprovar Solicitação":
-                motivo = st.selectbox("Motivo da Reprovação:", [
-                    "Falta de documentação",
-                    "Aluno não elegível ao transporte",
-                    "Reavaliação da Necessidade do Transporte"
-                ])
-            
-            arquivo_assinado = st.file_uploader("Incluir Arquivos Assinados (Obrigatório para finalizar)", 
-                                                type=['pdf', 'jpg', 'png'])
-            
-            btn_avaliar = st.form_submit_button("Finalizar Avaliação")
-            
-            if btn_avaliar:
-                if not nome_sup or not cpf_sup:
-                    st.error("Preencha seu Nome e CPF na barra lateral antes de finalizar.")
-                elif not arquivo_assinado:
-                    st.error("É necessário incluir o arquivo assinado para registrar a avaliação.")
-                else:
-                    status_final = "Aprovado" if decisao == "Aprovar Solicitação" else "Reprovado"
-                    motivo_final = motivo if status_final == "Reprovado" else "Aprovado - Sem restrições"
-                    
-                    c.execute('''
-                        UPDATE solicitacoes 
-                        SET status=?, supervisor_nome=?, supervisor_cpf=?, 
-                            motivo_reprovacao=?, arquivo_assinado=?, nome_arq_assinado=?,
-                            data_atualizacao=?
-                        WHERE id=?
-                    ''', (status_final, nome_sup, cpf_sup, motivo_final, 
-                          arquivo_assinado.getvalue(), arquivo_assinado.name, 
-                          datetime.now().strftime("%Y-%m-%d %H:%M:%S"), id_aluno))
-                    conn.commit()
-                    st.success("Avaliação registrada com sucesso!")
-                    st.rerun()
+            with st.form("form_validacao"):
+                decisao = st.radio("Parecer Final:", ["Aprovar Solicitação", "Reprovar Solicitação"])
+                
+                motivo = None
+                if decisao == "Reprovar Solicitação":
+                    motivo = st.selectbox("Motivo da Reprovação:", [
+                        "Falta de documentação",
+                        "Aluno não elegível ao transporte",
+                        "Reavaliação da Necessidade do Transporte"
+                    ])
+                
+                arquivo_assinado = st.file_uploader("Incluir Arquivos Assinados (Obrigatório para finalizar)", 
+                                                    type=['pdf', 'jpg', 'png'])
+                
+                btn_avaliar = st.form_submit_button("Finalizar Avaliação")
+                
+                if btn_avaliar:
+                    if not nome_sup or not cpf_sup:
+                        st.error("Preencha seu Nome e CPF na barra lateral antes de finalizar.")
+                    elif not arquivo_assinado:
+                        st.error("É necessário incluir o arquivo assinado para registrar a avaliação.")
+                    else:
+                        status_final = "Aprovado" if decisao == "Aprovar Solicitação" else "Reprovado"
+                        motivo_final = motivo if status_final == "Reprovado" else "Aprovado - Sem restrições"
+                        
+                        c.execute('''
+                            UPDATE solicitacoes 
+                            SET status=?, supervisor_nome=?, supervisor_cpf=?, 
+                                motivo_reprovacao=?, arquivo_assinado=?, nome_arq_assinado=?,
+                                data_atualizacao=?
+                            WHERE id=?
+                        ''', (status_final, nome_sup, cpf_sup, motivo_final, 
+                              arquivo_assinado.getvalue(), arquivo_assinado.name, 
+                              datetime.now().strftime("%Y-%m-%d %H:%M:%S"), id_aluno_selecionado))
+                        conn.commit()
+                        st.success("Avaliação registrada com sucesso!")
+                        st.rerun()
+        else:
+            st.warning("⚠️ Erro ao carregar dados. Tente recarregar a página.")
 
     else:
         st.info("Nenhuma solicitação pendente no momento.")
-
 # ---------------------------------------------------------------------
 # ABA 3: RELATÓRIOS
 # ---------------------------------------------------------------------
@@ -263,4 +270,5 @@ elif menu == "Relatórios":
     
     csv = df.to_csv(index=False).encode('utf-8')
     st.download_button("📥 Baixar Planilha Completa (CSV)", data=csv, file_name="relatorio_geral.csv", mime="text/csv")
+
 
