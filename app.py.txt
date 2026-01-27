@@ -1,0 +1,63 @@
+# Salve este código como app.py no seu computador
+import streamlit as st
+import sqlite3
+import pandas as pd
+
+# Configuração da Página
+st.set_page_config(page_title="Gestão Transporte Escolar")
+
+# Conexão Banco (Em memória para teste ou persistente se hospedado)
+conn = sqlite3.connect('transporte.db', check_same_thread=False)
+c = conn.cursor()
+
+# Criar Tabelas
+c.execute('''CREATE TABLE IF NOT EXISTS alunos 
+             (nome TEXT, cpf TEXT, status TEXT, arq_medico BLOB, arq_viagem BLOB)''')
+conn.commit()
+
+# --- ABA ESCOLA ---
+st.sidebar.title("Navegação")
+escolha = st.sidebar.radio("Ir para:", ["Escola (Cadastro)", "Supervisor (Validação)"])
+
+if escolha == "Escola (Cadastro)":
+    st.title("🏫 Cadastro de Aluno")
+    nome = st.text_input("Nome do Aluno")
+    cpf = st.text_input("CPF")
+    
+    f_medico = st.file_uploader("Ficha Médica", type=['pdf', 'png', 'jpg'])
+    f_viagem = st.file_uploader("Ficha Viagem", type=['pdf', 'png', 'jpg'])
+    
+    if st.button("Enviar Solicitação"):
+        if nome and cpf:
+            # Lógica simplificada de salvamento
+            c.execute("INSERT INTO alunos VALUES (?, ?, 'Pendente', ?, ?)", 
+                      (nome, cpf, f_medico.read() if f_medico else None, f_viagem.read() if f_viagem else None))
+            conn.commit()
+            st.success(f"Aluno {nome} enviado para validação!")
+        else:
+            st.error("Preencha todos os campos.")
+
+# --- ABA SUPERVISOR ---
+elif escolha == "Supervisor (Validação)":
+    st.title("📋 Validação Supervisor")
+    
+    # Listar Pendentes
+    df = pd.read_sql("SELECT rowid, nome, cpf, status FROM alunos WHERE status='Pendente'", conn)
+    
+    if not df.empty:
+        aluno_sel = st.selectbox("Selecione o Aluno:", df['nome'])
+        id_aluno = df[df['nome'] == aluno_sel].index[0] # Simplificação
+        
+        st.write(f"Validando: **{aluno_sel}**")
+        
+        # Aqui você colocaria os botões de download (st.download_button)
+        
+        f_assinado = st.file_uploader("Anexar Ficha Assinada")
+        
+        if st.button("Aprovar Transporte") and f_assinado:
+            c.execute("UPDATE alunos SET status='Aprovado' WHERE nome=?", (aluno_sel,))
+            conn.commit()
+            st.success("Validado com sucesso!")
+            st.rerun()
+    else:
+        st.info("Nenhuma pendência no momento.")
