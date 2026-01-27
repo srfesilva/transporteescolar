@@ -9,11 +9,11 @@ from datetime import datetime
 # ==========================================
 st.set_page_config(page_title="Gestão de Transporte Escolar", layout="wide")
 
-# Conectar ao banco (usamos v2 para garantir que as novas colunas sejam criadas)
-conn = sqlite3.connect('transporte_v2.db', check_same_thread=False)
+# Conectar ao banco V3 (Nova estrutura de colunas)
+conn = sqlite3.connect('transporte_v3.db', check_same_thread=False)
 c = conn.cursor()
 
-# Criar tabela com TODOS os novos campos
+# Criar tabela com NOVOS CAMPOS SEPARADOS
 c.execute('''
 CREATE TABLE IF NOT EXISTS solicitacoes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -23,17 +23,27 @@ CREATE TABLE IF NOT EXISTS solicitacoes (
     ra_aluno TEXT,
     cadeirante TEXT,
     cid TEXT,
+    
+    -- Endereço Aluno Detalhado
     cep_aluno TEXT,
-    endereco_aluno TEXT,
+    logradouro_aluno TEXT,
+    numero_aluno TEXT,
+    municipio_aluno TEXT,
     
     -- Dados da Escola
     nome_escola TEXT,
-    endereco_escola TEXT,
+    cep_escola TEXT,
+    logradouro_escola TEXT,
+    numero_escola TEXT,
+    municipio_escola TEXT,
+    
+    -- Frequência
     sala_recurso TEXT,
     dias_frequencia TEXT,
-    horarios_frequencia TEXT,
+    horario_entrada TEXT,
+    horario_saida TEXT,
     
-    -- Arquivos (Salvos como binário BLOB para simplificar)
+    -- Arquivos (BLOB)
     arquivo_medico BLOB,
     nome_arq_medico TEXT,
     arquivo_viagem BLOB,
@@ -54,15 +64,15 @@ conn.commit()
 # ==========================================
 # FUNÇÕES AUXILIARES
 # ==========================================
-def buscar_endereco_cep(cep):
-    """Busca endereço pelo CEP usando a API ViaCEP"""
+def buscar_dados_cep(cep):
+    """Retorna um dicionário com logradouro, bairro, localidade(municipio), uf"""
     cep = cep.replace("-", "").replace(".", "").strip()
     if len(cep) == 8:
         try:
             response = requests.get(f"https://viacep.com.br/ws/{cep}/json/")
             dados = response.json()
             if "erro" not in dados:
-                return f"{dados['logradouro']}, {dados['bairro']}, {dados['localidade']} - {dados['uf']}"
+                return dados
         except:
             return None
     return None
@@ -71,7 +81,7 @@ def buscar_endereco_cep(cep):
 # INTERFACE
 # ==========================================
 st.sidebar.title("Navegação")
-menu = st.sidebar.radio("Ir para:", ["Escola (Solicitação)", "Supervisor (Avaliação)", "Relatórios"])
+menu = st.sidebar.radio("Ir para:", ["Escola (Solicitação)", "Supervisor (Avaliação)", "Relatórios e Docs"])
 
 # ---------------------------------------------------------------------
 # ABA 1: ESCOLA (SOLICITAÇÃO)
@@ -80,145 +90,178 @@ if menu == "Escola (Solicitação)":
     st.title("🚌 Solicitação de Transporte Escolar")
     st.markdown("---")
 
+    if "end_aluno_cache" not in st.session_state: st.session_state.end_aluno_cache = {}
+    if "end_escola_cache" not in st.session_state: st.session_state.end_escola_cache = {}
+
     with st.form("form_escola"):
+        # --- BLOCO 1: DADOS PESSOAIS ---
         st.subheader("1. Dados do Aluno")
         col1, col2, col3 = st.columns(3)
-        nome = col1.text_input("Nome Completo do Aluno")
-        cpf = col2.text_input("CPF do Aluno")
-        ra = col3.text_input("R.A. do Aluno")
+        nome = col1.text_input("Nome Completo do Aluno (Obrigatório)")
+        cpf = col2.text_input("CPF do Aluno (Obrigatório)")
+        ra = col3.text_input("R.A. do Aluno (Obrigatório)")
 
         col4, col5 = st.columns(2)
         cadeirante = col4.radio("Aluno Cadeirante?", ["NÃO", "SIM"], horizontal=True)
         cid = col5.text_input("CID (Código Internacional de Doenças)")
 
-        # Busca de CEP
+        # --- BLOCO 2: ENDEREÇO RESIDENCIAL ---
         st.markdown("##### Endereço Residencial")
-        col_cep, col_end = st.columns([1, 3])
-        cep_input = col_cep.text_input("CEP (somente números)")
+        col_cep1, col_btn1 = st.columns([2, 1])
+        cep_input_aluno = col_cep1.text_input("CEP Residencial (Opcional)")
         
-        # Lógica simples para sugerir endereço no label (limitação do form streamit)
-        endereco_sugerido = ""
-        if cep_input:
-            end_encontrado = buscar_endereco_cep(cep_input)
-            if end_encontrado:
-                st.info(f"CEP Encontrado: {end_encontrado}")
-                endereco_sugerido = end_encontrado
-            else:
-                st.warning("CEP não encontrado ou inválido.")
+        # Botão fictício de busca (o Streamlit reexecuta o form, simulando a busca)
+        # Lógica de preenchimento automático
+        logradouro_suggest = ""
+        municipio_suggest = ""
         
-        endereco_aluno = col_end.text_input("Endereço Completo e Número", value=endereco_sugerido)
+        if cep_input_aluno and len(cep_input_aluno) >= 8:
+            dados_cep = buscar_dados_cep(cep_input_aluno)
+            if dados_cep:
+                logradouro_suggest = f"{dados_cep['logradouro']}, {dados_cep['bairro']}"
+                municipio_suggest = f"{dados_cep['localidade']} - {dados_cep['uf']}"
+                st.caption(f"✅ Endereço encontrado: {logradouro_suggest}")
+        
+        col_end1, col_num1, col_mun1 = st.columns([3, 1, 2])
+        end_aluno = col_end1.text_input("Logradouro Completo", value=logradouro_suggest)
+        num_aluno = col_num1.text_input("Número (Obrigatório)")
+        mun_aluno = col_mun1.text_input("Município (Obrigatório)", value=municipio_suggest)
 
-        st.subheader("2. Dados da Unidade Escolar e Frequência")
-        nome_escola = st.text_input("Nome da Unidade Escolar ou Instituição Credenciada")
-        end_escola = st.text_input("Endereço da Unidade Escolar")
+        # --- BLOCO 3: UNIDADE ESCOLAR ---
+        st.subheader("2. Dados da Unidade Escolar")
+        nome_escola = st.text_input("Nome da Unidade Escolar ou Instituição")
         
-        col6, col7 = st.columns(2)
-        sala_recurso = col6.radio("Frequenta Sala de Recurso?", ["NÃO", "SIM"], horizontal=True)
+        col_cep2, col_dummy = st.columns([2, 3])
+        cep_input_escola = col_cep2.text_input("CEP Escola (Opcional)")
         
-        st.markdown("##### Frequência")
-        col_dias, col_hrs = st.columns(2)
-        dias_freq = col_dias.multiselect("Dias de Frequência", 
-                                         ["Segunda", "Terça", "Quarta", "Quinta", "Sexta"])
-        hrs_freq = col_hrs.text_input("Horários (Ex: Entrada 07:00 / Saída 12:00)")
+        logradouro_esc_suggest = ""
+        municipio_esc_suggest = ""
+        
+        if cep_input_escola and len(cep_input_escola) >= 8:
+            dados_cep_esc = buscar_dados_cep(cep_input_escola)
+            if dados_cep_esc:
+                logradouro_esc_suggest = f"{dados_cep_esc['logradouro']}, {dados_cep_esc['bairro']}"
+                municipio_esc_suggest = f"{dados_cep_esc['localidade']} - {dados_cep_esc['uf']}"
+                st.caption(f"✅ Escola encontrada: {logradouro_esc_suggest}")
 
-        st.subheader("3. Documentação Obrigatória")
+        col_end2, col_num2, col_mun2 = st.columns([3, 1, 2])
+        end_escola = col_end2.text_input("Logradouro Escola", value=logradouro_esc_suggest)
+        num_escola = col_num2.text_input("Número Escola (Obrigatório)")
+        mun_escola = col_mun2.text_input("Município Escola (Obrigatório)", value=municipio_esc_suggest)
+
+        # --- BLOCO 4: FREQUÊNCIA ---
+        st.subheader("3. Frequência e Horários")
+        sala_recurso = st.radio("Frequenta Sala de Recurso?", ["NÃO", "SIM"], horizontal=True)
+        
+        dias_freq = st.multiselect("Dias de Frequência", ["Segunda", "Terça", "Quarta", "Quinta", "Sexta"])
+        
+        st.markdown("**Horários (Formato Relógio - Obrigatório)**")
+        col_h1, col_h2 = st.columns(2)
+        hr_entrada = col_h1.time_input("Horário de Entrada", value=None)
+        hr_saida = col_h2.time_input("Horário de Saída", value=None)
+
+        # --- BLOCO 5: DOCUMENTOS ---
+        st.subheader("4. Documentação Obrigatória")
         doc_medico = st.file_uploader("Ficha Médica", type=['pdf', 'jpg', 'png'])
         doc_viagem = st.file_uploader("Ficha de Programação de Viagem", type=['pdf', 'jpg', 'png'])
 
         submitted = st.form_submit_button("Enviar Solicitação")
 
         if submitted:
-            if nome and cpf and ra and doc_medico and doc_viagem:
-                # Converter arquivos para binário
-                bin_medico = doc_medico.getvalue()
-                bin_viagem = doc_viagem.getvalue()
+            # Validação de Campos Obrigatórios
+            if not nome or not cpf or not ra:
+                st.error("Preencha Nome, CPF e RA do aluno.")
+            elif not num_aluno or not mun_aluno:
+                st.error("Número e Município do Aluno são obrigatórios.")
+            elif not num_escola or not mun_escola:
+                st.error("Número e Município da Escola são obrigatórios.")
+            elif not hr_entrada or not hr_saida:
+                st.error("Os horários de Entrada e Saída são obrigatórios.")
+            elif not doc_medico or not doc_viagem:
+                st.error("Anexe os documentos obrigatórios.")
+            else:
+                # Processamento
                 dias_str = ", ".join(dias_freq)
+                hr_ent_str = hr_entrada.strftime("%H:%M")
+                hr_sai_str = hr_saida.strftime("%H:%M")
 
                 c.execute('''
                     INSERT INTO solicitacoes (
                         nome_aluno, cpf_aluno, ra_aluno, cadeirante, cid, 
-                        cep_aluno, endereco_aluno, nome_escola, endereco_escola, 
-                        sala_recurso, dias_frequencia, horarios_frequencia,
+                        cep_aluno, logradouro_aluno, numero_aluno, municipio_aluno,
+                        nome_escola, cep_escola, logradouro_escola, numero_escola, municipio_escola,
+                        sala_recurso, dias_frequencia, horario_entrada, horario_saida,
                         arquivo_medico, nome_arq_medico, arquivo_viagem, nome_arq_viagem
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (
-                    nome, cpf, ra, cadeirante, cid, cep_input, endereco_aluno,
-                    nome_escola, end_escola, sala_recurso, dias_str, hrs_freq,
-                    bin_medico, doc_medico.name, bin_viagem, doc_viagem.name
+                    nome, cpf, ra, cadeirante, cid, 
+                    cep_input_aluno, end_aluno, num_aluno, mun_aluno,
+                    nome_escola, cep_input_escola, end_escola, num_escola, mun_escola,
+                    sala_recurso, dias_str, hr_ent_str, hr_sai_str,
+                    doc_medico.getvalue(), doc_medico.name, doc_viagem.getvalue(), doc_viagem.name
                 ))
                 conn.commit()
-                st.success(f"Solicitação para o aluno {nome} enviada com sucesso!")
-            else:
-                st.error("Por favor, preencha os campos obrigatórios e anexe os documentos.")
+                st.success(f"Solicitação enviada com sucesso! Aluno: {nome}")
+
 # ---------------------------------------------------------------------
-# ABA 2: SUPERVISOR (AVALIAÇÃO) - CORRIGIDA
+# ABA 2: SUPERVISOR (AVALIAÇÃO)
 # ---------------------------------------------------------------------
 elif menu == "Supervisor (Avaliação)":
-    st.title("📋 Avaliação do Supervisor / PEC")
+    st.title("📋 Painel do Supervisor")
     
-    # Identificação do Supervisor
-    st.sidebar.markdown("### Identificação")
-    nome_sup = st.sidebar.text_input("Nome do Supervisor ou PEC")
-    cpf_sup = st.sidebar.text_input("CPF do Supervisor")
-
     # Lista de Pendentes
     df_pendentes = pd.read_sql("SELECT id, nome_aluno, status FROM solicitacoes WHERE status='Pendente'", conn)
     
     if not df_pendentes.empty:
-        # TRUQUE PARA EVITAR ERRO: Criamos uma lista combinando "ID - Nome"
-        # Assim garantimos que o sistema pegue o ID correto mesmo se houver nomes iguais
         opcoes_alunos = df_pendentes.apply(lambda x: f"{x['id']} - {x['nome_aluno']}", axis=1)
+        escolha = st.selectbox("Selecione um Aluno Pendente:", opcoes_alunos)
         
-        escolha = st.selectbox("Selecione um Aluno para Avaliar:", opcoes_alunos)
-        
-        # Aqui separamos o número (ID) do texto. Ex: Pega "1" de "1 - João"
         id_aluno_selecionado = int(escolha.split(' - ')[0])
         
-        # Buscar dados completos do aluno usando o ID numérico garantido
         c.execute("SELECT * FROM solicitacoes WHERE id=?", (id_aluno_selecionado,))
         dados = c.fetchone()
         
-        # VERIFICAÇÃO DE SEGURANÇA (Se dados existir, mostra. Se não, avisa)
         if dados:
-            st.markdown("---")
-            col_detalhes1, col_detalhes2 = st.columns(2)
+            st.info(f"Analisando solicitação # {dados[0]}")
             
-            # Nota: dados[0] é id, dados[1] é nome, etc.
-            with col_detalhes1:
-                st.markdown(f"**Aluno:** {dados[1]}")
-                st.markdown(f"**CPF:** {dados[2]}")
-                st.markdown(f"**R.A.:** {dados[3]}")
-                st.markdown(f"**Cadeirante:** {dados[4]}")
-                st.markdown(f"**CID:** {dados[5]}")
-                st.markdown(f"**Endereço:** {dados[7]}")
+            # Layout de visualização dos dados
+            tab_dados, tab_docs = st.tabs(["Dados da Solicitação", "Documentos Anexados"])
+            
+            with tab_dados:
+                c1, c2 = st.columns(2)
+                with c1:
+                    st.markdown("### Aluno")
+                    st.write(f"**Nome:** {dados[1]}")
+                    st.write(f"**CPF:** {dados[2]} | **RA:** {dados[3]}")
+                    st.write(f"**CID:** {dados[5]} | **Cadeirante:** {dados[4]}")
+                    st.write(f"**Endereço:** {dados[7]}, Nº {dados[8]} - {dados[9]}")
                 
-            with col_detalhes2:
-                st.markdown(f"**Escola:** {dados[8]}")
-                st.markdown(f"**Sala Recurso:** {dados[10]}")
-                st.markdown(f"**Dias:** {dados[11]}")
-                st.markdown(f"**Horários:** {dados[12]}")
+                with c2:
+                    st.markdown("### Escola e Horários")
+                    st.write(f"**Instituição:** {dados[10]}")
+                    st.write(f"**Endereço:** {dados[12]}, Nº {dados[13]} - {dados[14]}")
+                    st.write(f"**Dias:** {dados[16]}")
+                    st.write(f"**Horário:** Entrada {dados[17]} / Saída {dados[18]}")
 
-            st.markdown("### 📂 Documentos do Aluno")
-            col_docs1, col_docs2 = st.columns(2)
-            
-            # Botões de Download com verificação de erro
-            if dados[13]: # Arquivo Medico
-                col_docs1.download_button(label=f"⬇️ Baixar Ficha Médica", 
-                                          data=dados[13], 
-                                          file_name=dados[14] or "ficha_medica.pdf",
-                                          key=f"btn_med_{id_aluno_selecionado}") # Key única para não travar
-            
-            if dados[15]: # Arquivo Viagem
-                col_docs2.download_button(label=f"⬇️ Baixar Ficha Viagem", 
-                                          data=dados[15], 
-                                          file_name=dados[16] or "ficha_viagem.pdf",
-                                          key=f"btn_via_{id_aluno_selecionado}")
+            with tab_docs:
+                st.markdown("#### Documentos enviados pela Escola")
+                cd1, cd2 = st.columns(2)
+                if dados[19]:
+                    cd1.download_button("⬇️ Baixar Ficha Médica", data=dados[19], file_name=dados[20] or "medico.pdf")
+                if dados[21]:
+                    cd2.download_button("⬇️ Baixar Ficha Viagem", data=dados[21], file_name=dados[22] or "viagem.pdf")
 
             st.markdown("---")
-            st.subheader("Decisão do Supervisor")
+            st.markdown("### ✍️ Validação e Parecer")
             
-            with st.form("form_validacao"):
-                decisao = st.radio("Parecer Final:", ["Aprovar Solicitação", "Reprovar Solicitação"])
+            with st.form("form_supervisor"):
+                # IDENTIFICAÇÃO DENTRO DO FORMULÁRIO (Solicitação atendida)
+                col_sup1, col_sup2 = st.columns(2)
+                nome_sup = col_sup1.text_input("Nome Completo do Supervisor / PEC")
+                cpf_sup = col_sup2.text_input("CPF do Supervisor")
+                
+                st.markdown("#### Decisão")
+                decisao = st.radio("Parecer:", ["Aprovar Solicitação", "Reprovar Solicitação"])
                 
                 motivo = None
                 if decisao == "Reprovar Solicitação":
@@ -228,16 +271,16 @@ elif menu == "Supervisor (Avaliação)":
                         "Reavaliação da Necessidade do Transporte"
                     ])
                 
-                arquivo_assinado = st.file_uploader("Incluir Arquivos Assinados (Obrigatório para finalizar)", 
-                                                    type=['pdf', 'jpg', 'png'])
+                st.markdown("#### Devolutiva Assinada")
+                arquivo_assinado = st.file_uploader("Anexar Ficha Assinada (Obrigatório)", type=['pdf', 'jpg', 'png'])
                 
-                btn_avaliar = st.form_submit_button("Finalizar Avaliação")
+                btn_avaliar = st.form_submit_button("Finalizar Processo")
                 
                 if btn_avaliar:
                     if not nome_sup or not cpf_sup:
-                        st.error("Preencha seu Nome e CPF na barra lateral antes de finalizar.")
+                        st.error("Identificação do Supervisor é obrigatória.")
                     elif not arquivo_assinado:
-                        st.error("É necessário incluir o arquivo assinado para registrar a avaliação.")
+                        st.error("É necessário anexar a ficha assinada.")
                     else:
                         status_final = "Aprovado" if decisao == "Aprovar Solicitação" else "Reprovado"
                         motivo_final = motivo if status_final == "Reprovado" else "Aprovado - Sem restrições"
@@ -252,23 +295,68 @@ elif menu == "Supervisor (Avaliação)":
                               arquivo_assinado.getvalue(), arquivo_assinado.name, 
                               datetime.now().strftime("%Y-%m-%d %H:%M:%S"), id_aluno_selecionado))
                         conn.commit()
-                        st.success("Avaliação registrada com sucesso!")
+                        st.success("Avaliação concluída com sucesso!")
                         st.rerun()
-        else:
-            st.warning("⚠️ Erro ao carregar dados. Tente recarregar a página.")
-
     else:
-        st.info("Nenhuma solicitação pendente no momento.")
+        st.success("Tudo em dia! Nenhuma solicitação pendente.")
+
 # ---------------------------------------------------------------------
-# ABA 3: RELATÓRIOS
+# ABA 3: RELATÓRIOS E DOCUMENTOS
 # ---------------------------------------------------------------------
-elif menu == "Relatórios":
-    st.title("📊 Relatório Geral")
+elif menu == "Relatórios e Docs":
+    st.title("🗂️ Relatório Geral e Documentos")
     
-    df = pd.read_sql("SELECT id, nome_aluno, cpf_aluno, ra_aluno, nome_escola, status, motivo_reprovacao FROM solicitacoes", conn)
+    # Filtros
+    status_filter = st.selectbox("Filtrar por Status:", ["Todos", "Pendente", "Aprovado", "Reprovado"])
+    
+    query = "SELECT id, nome_aluno, cpf_aluno, nome_escola, status, supervisor_nome, motivo_reprovacao FROM solicitacoes"
+    if status_filter != "Todos":
+        query += f" WHERE status = '{status_filter}'"
+        
+    df = pd.read_sql(query, conn)
+    
+    # 1. Tabela Resumo
+    st.markdown("### Visão Geral")
     st.dataframe(df)
     
-    csv = df.to_csv(index=False).encode('utf-8')
-    st.download_button("📥 Baixar Planilha Completa (CSV)", data=csv, file_name="relatorio_geral.csv", mime="text/csv")
-
-
+    # 2. Acesso aos Documentos
+    st.markdown("---")
+    st.markdown("### 📂 Acesso aos Arquivos por Aluno")
+    st.info("Clique no nome do aluno abaixo para ver e baixar todos os documentos.")
+    
+    # Buscar todos os dados (incluindo blobs) para listar
+    c.execute(f"SELECT id, nome_aluno, arquivo_medico, nome_arq_medico, arquivo_viagem, nome_arq_viagem, arquivo_assinado, nome_arq_assinado, status FROM solicitacoes")
+    todos_dados = c.fetchall()
+    
+    for row in todos_dados:
+        # row[0]=id, row[1]=nome, row[2]=blob_med, row[3]=nome_med, row[4]=blob_via, row[5]=nome_via, row[6]=blob_ass, row[7]=nome_ass, row[8]=status
+        
+        # Filtro visual (se usuario selecionou pendente, so mostra pendente na lista tambem)
+        if status_filter != "Todos" and row[8] != status_filter:
+            continue
+            
+        icon = "✅" if row[8] == "Aprovado" else "❌" if row[8] == "Reprovado" else "⏳"
+        
+        with st.expander(f"{icon} {row[1]} (ID: {row[0]}) - Status: {row[8]}"):
+            cols = st.columns(3)
+            
+            # Doc Medico
+            with cols[0]:
+                if row[2]:
+                    st.download_button("📄 Baixar Ficha Médica", data=row[2], file_name=row[3], key=f"rm_{row[0]}")
+                else:
+                    st.caption("Ficha Médica não encontrada")
+            
+            # Doc Viagem
+            with cols[1]:
+                if row[4]:
+                    st.download_button("🚌 Baixar Ficha Viagem", data=row[4], file_name=row[5], key=f"rv_{row[0]}")
+                else:
+                    st.caption("Ficha Viagem não encontrada")
+            
+            # Doc Assinado (Supervisor)
+            with cols[2]:
+                if row[6]:
+                    st.download_button("✍️ Baixar Parecer Supervisor", data=row[6], file_name=row[7], key=f"ra_{row[0]}")
+                else:
+                    st.caption("Ainda não avaliado/assinado")
