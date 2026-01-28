@@ -206,99 +206,71 @@ if menu == "Escola (Solicitação)":
 # ---------------------------------------------------------------------
 # ABA 2: SUPERVISOR (AVALIAÇÃO)
 # ---------------------------------------------------------------------
-elif menu == "Supervisor (Avaliação)":
-    st.title("📋 Painel do Supervisor")
-    
-    # Lista de Pendentes
-    df_pendentes = pd.read_sql("SELECT id, nome_aluno, status FROM solicitacoes WHERE status='Pendente'", conn)
-    
-    if not df_pendentes.empty:
-        opcoes_alunos = df_pendentes.apply(lambda x: f"{x['id']} - {x['nome_aluno']}", axis=1)
-        escolha = st.selectbox("Selecione um Aluno Pendente:", opcoes_alunos)
+ elif menu == "Relatórios e Docs":
+        st.title("🗂️ Relatório Geral e Edição")
         
-        id_aluno_selecionado = int(escolha.split(' - ')[0])
+        filtro = st.selectbox("Filtrar Status", ["Todos", "Pendente", "Aprovado", "Reprovado"])
         
-        c.execute("SELECT * FROM solicitacoes WHERE id=?", (id_aluno_selecionado,))
-        dados = c.fetchone()
+        query = "SELECT * FROM solicitacoes"
+        if filtro != "Todos":
+            query += f" WHERE status = '{filtro}'"
+            
+        df = pd.read_sql(query, conn)
         
-        if dados:
-            st.info(f"Analisando solicitação # {dados[0]}")
+        # Tabela Simples
+        st.dataframe(df[['id', 'nome_aluno', 'nome_escola', 'status', 'empresa', 'supervisor_nome']])
+        
+        st.markdown("---")
+        st.subheader("Gerenciar Registros (Editar / Excluir / Docs)")
+        
+        registros = c.execute(query).fetchall()
+        
+        for reg in registros:
+            # Layout do Expander: Ícone + Nome + Empresa
+            empresa_lbl = f" | 🏢 {reg['empresa']}" if reg['empresa'] else ""
+            label = f"🆔 {reg['id']} - {reg['nome_aluno']} ({reg['status']}){empresa_lbl}"
             
-            # Layout de visualização dos dados
-            tab_dados, tab_docs = st.tabs(["Dados da Solicitação", "Documentos Anexados"])
-            
-            with tab_dados:
-                c1, c2 = st.columns(2)
-                with c1:
-                    st.markdown("### Aluno")
-                    st.write(f"**Nome:** {dados[1]}")
-                    st.write(f"**CPF:** {dados[2]} | **RA:** {dados[3]}")
-                    st.write(f"**CID:** {dados[5]} | **Cadeirante:** {dados[4]}")
-                    st.write(f"**Endereço:** {dados[7]}, Nº {dados[8]} - {dados[9]}")
+            with st.expander(label):
                 
-                with c2:
-                    st.markdown("### Escola e Horários")
-                    st.write(f"**Instituição:** {dados[10]}")
-                    st.write(f"**Endereço:** {dados[12]}, Nº {dados[13]} - {dados[14]}")
-                    st.write(f"**Dias:** {dados[16]}")
-                    st.write(f"**Horário:** Entrada {dados[17]} / Saída {dados[18]}")
-
-            with tab_docs:
-                st.markdown("#### Documentos enviados pela Escola")
-                cd1, cd2 = st.columns(2)
-                if dados[19]:
-                    cd1.download_button("⬇️ Baixar Ficha Médica", data=dados[19], file_name=dados[20] or "medico.pdf")
-                if dados[21]:
-                    cd2.download_button("⬇️ Baixar Ficha Viagem", data=dados[21], file_name=dados[22] or "viagem.pdf")
-
-            st.markdown("---")
-            st.markdown("### ✍️ Validação e Parecer")
-            
-            with st.form("form_supervisor"):
-                # IDENTIFICAÇÃO DENTRO DO FORMULÁRIO (Solicitação atendida)
-                col_sup1, col_sup2 = st.columns(2)
-                nome_sup = col_sup1.text_input("Nome Completo do Supervisor / PEC")
-                cpf_sup = col_sup2.text_input("CPF do Supervisor")
+                # --- ÁREA DE DOCUMENTOS ---
+                st.markdown("#### 📂 Documentos")
+                cd1, cd2, cd3 = st.columns(3)
+                if reg['arquivo_medico']: cd1.download_button("Ficha Médica", reg['arquivo_medico'], "med.pdf", key=f"dm{reg['id']}")
+                if reg['arquivo_viagem']: cd2.download_button("Ficha Viagem", reg['arquivo_viagem'], "via.pdf", key=f"dv{reg['id']}")
+                if reg['arquivo_assinado']: cd3.download_button("Parecer Assinado", reg['arquivo_assinado'], "par.pdf", key=f"da{reg['id']}")
                 
-                st.markdown("#### Decisão")
-                decisao = st.radio("Parecer:", ["Aprovar Solicitação", "Reprovar Solicitação"])
+                st.markdown("---")
                 
-                motivo = None
-                if decisao == "Reprovar Solicitação":
-                    motivo = st.selectbox("Motivo da Reprovação:", [
-                        "Falta de documentação",
-                        "Aluno não elegível ao transporte",
-                        "Reavaliação da Necessidade do Transporte"
-                    ])
-                
-                st.markdown("#### Devolutiva Assinada")
-                arquivo_assinado = st.file_uploader("Anexar Ficha Assinada (Obrigatório)", type=['pdf', 'jpg', 'png'])
-                
-                btn_avaliar = st.form_submit_button("Finalizar Processo")
-                
-                if btn_avaliar:
-                    if not nome_sup or not cpf_sup:
-                        st.error("Identificação do Supervisor é obrigatória.")
-                    elif not arquivo_assinado:
-                        st.error("É necessário anexar a ficha assinada.")
-                    else:
-                        status_final = "Aprovado" if decisao == "Aprovar Solicitação" else "Reprovado"
-                        motivo_final = motivo if status_final == "Reprovado" else "Aprovado - Sem restrições"
-                        
-                        c.execute('''
-                            UPDATE solicitacoes 
-                            SET status=?, supervisor_nome=?, supervisor_cpf=?, 
-                                motivo_reprovacao=?, arquivo_assinado=?, nome_arq_assinado=?,
-                                data_atualizacao=?
-                            WHERE id=?
-                        ''', (status_final, nome_sup, cpf_sup, motivo_final, 
-                              arquivo_assinado.getvalue(), arquivo_assinado.name, 
-                              datetime.now().strftime("%Y-%m-%d %H:%M:%S"), id_aluno_selecionado))
+                # --- ÁREA DE EDIÇÃO ---
+                st.markdown("#### ✏️ Editar Informações")
+                with st.form(f"edit_{reg['id']}"):
+                    ce1, ce2 = st.columns(2)
+                    new_nome = ce1.text_input("Nome Aluno", reg['nome_aluno'])
+                    new_status = ce2.selectbox("Status", ["Pendente", "Aprovado", "Reprovado"], index=["Pendente", "Aprovado", "Reprovado"].index(reg['status']))
+                    
+                    ce3, ce4 = st.columns(2)
+                    new_escola = ce3.text_input("Escola", reg['nome_escola'])
+                    # NOVO CAMPO EMPRESA
+                    new_empresa = ce4.text_input("🏢 Empresa Transportadora", value=reg['empresa'] if reg['empresa'] else "")
+                    
+                    c_save, c_del = st.columns([1, 4])
+                    save_btn = c_save.form_submit_button("💾 Salvar Alterações")
+                    
+                    if save_btn:
+                        c.execute("UPDATE solicitacoes SET nome_aluno=?, status=?, nome_escola=?, empresa=? WHERE id=?",
+                                  (new_nome, new_status, new_escola, new_empresa, reg['id']))
                         conn.commit()
-                        st.success("Avaliação concluída com sucesso!")
+                        st.success("Atualizado!")
+                        time.sleep(1)
                         st.rerun()
-    else:
-        st.success("Tudo em dia! Nenhuma solicitação pendente.")
+
+                # Botão de Excluir fora do form para evitar conflito de submit
+                if st.button(f"🗑️ Excluir Registro {reg['id']}", key=f"del_{reg['id']}"):
+                    c.execute("DELETE FROM solicitacoes WHERE id=?", (reg['id'],))
+                    conn.commit()
+                    st.warning("Registro excluído.")
+                    time.sleep(1)
+                    st.rerun()
 
 # ---------------------------------------------------------------------
 # ABA 3: RELATÓRIOS E DOCUMENTOS
@@ -360,3 +332,4 @@ elif menu == "Relatórios e Docs":
                     st.download_button("✍️ Baixar Parecer Supervisor", data=row[6], file_name=row[7], key=f"ra_{row[0]}")
                 else:
                     st.caption("Ainda não avaliado/assinado")
+
