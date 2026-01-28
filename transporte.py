@@ -8,24 +8,23 @@ import time
 # ==========================================
 # CONFIGURAÇÃO DA PÁGINA
 # ==========================================
-st.set_page_config(page_title="HOMOLOG - Gestão de Transporte Escolar", layout="wide")
+st.set_page_config(page_title="Gestão de Transporte Escolar", layout="wide")
 
 # ==========================================
 # CONEXÃO E MIGRATION DO BANCO DE DADOS
 # ==========================================
-# Usando V4 para garantir a criação limpa das novas tabelas de usuário e coluna empresa
 DB_NAME = 'transporte_v4.db'
 
 def get_db_connection():
     conn = sqlite3.connect(DB_NAME, check_same_thread=False)
-    conn.row_factory = sqlite3.Row # Permite acessar colunas pelo nome
+    conn.row_factory = sqlite3.Row
     return conn
 
 def init_db():
     conn = get_db_connection()
     c = conn.cursor()
     
-    # 1. Tabela de Solicitações (Dados do Aluno)
+    # 1. Tabela de Solicitações
     c.execute('''
     CREATE TABLE IF NOT EXISTS solicitacoes (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -39,29 +38,33 @@ def init_db():
     )
     ''')
     
-    # 2. Tabela de Usuários (Gestão de Acesso)
+    # 2. Tabela de Usuários
     c.execute('''
     CREATE TABLE IF NOT EXISTS usuarios (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         nome_completo TEXT,
         username TEXT UNIQUE NOT NULL,
         password TEXT NOT NULL,
-        perfis TEXT NOT NULL -- Perfis separados por vírgula ex: "ADM,Escola"
+        perfis TEXT NOT NULL
     )
     ''')
     
-    # 3. Migration: Adicionar coluna 'empresa' se não existir na tabela solicitacoes
+    # 3. Adicionar coluna 'empresa' se não existir
     try:
         c.execute("ALTER TABLE solicitacoes ADD COLUMN empresa TEXT")
     except sqlite3.OperationalError:
-        pass # Coluna já existe
+        pass 
         
-    # 4. Criar usuário ADM padrão se não existir
+    # 4. GARANTIR USUÁRIO ADM COM A SENHA NOVA (12345678)
+    # Verifica se já existe
     c.execute("SELECT * FROM usuarios WHERE username = 'adm'")
-    if not c.fetchone():
-        # Perfis salvos como string separada por vírgula
+    if c.fetchone():
+        # Se existe, ATUALIZA a senha para garantir a mudança
+        c.execute("UPDATE usuarios SET password = '12345678' WHERE username = 'adm'")
+    else:
+        # Se não existe, CRIA com a senha nova
         c.execute("INSERT INTO usuarios (nome_completo, username, password, perfis) VALUES (?, ?, ?, ?)",
-                  ("Administrador do Sistema", "adm", "Adm12345", "ADM"))
+                  ("Administrador do Sistema", "adm", "12345678", "ADM"))
         
     conn.commit()
     conn.close()
@@ -84,7 +87,6 @@ def verificar_credenciais(username, password):
 def login_screen():
     st.markdown("<h1 style='text-align: center;'>🔐 Transporte Escolar</h1>", unsafe_allow_html=True)
     
-    # Se já validou senha mas tem múltiplos perfis, mostra seleção
     if st.session_state.get("auth_success") and st.session_state.get("pending_roles"):
         st.info(f"Olá, {st.session_state.temp_user_name}!")
         roles = st.session_state.pending_roles
@@ -98,7 +100,6 @@ def login_screen():
             st.session_state.user_name = st.session_state.temp_user_name
             st.session_state.username_login = st.session_state.temp_username_login
             
-            # Limpa variaveis temporarias
             del st.session_state.auth_success
             del st.session_state.pending_roles
             del st.session_state.temp_user_name
@@ -106,7 +107,6 @@ def login_screen():
             st.rerun()
             
     else:
-        # Tela de Login Padrão
         col1, col2, col3 = st.columns([1,2,1])
         with col2:
             with st.form("login_form"):
@@ -120,7 +120,6 @@ def login_screen():
                         perfis_str = user_db["perfis"]
                         lista_perfis = [p.strip() for p in perfis_str.split(",")]
                         
-                        # Se tiver só um perfil, loga direto
                         if len(lista_perfis) == 1:
                             st.session_state.logged_in = True
                             st.session_state.user_role = lista_perfis[0]
@@ -128,7 +127,6 @@ def login_screen():
                             st.session_state.username_login = user_db["username"]
                             st.rerun()
                         else:
-                            # Se tiver mais de um, marca flag para mostrar o selectbox
                             st.session_state.auth_success = True
                             st.session_state.pending_roles = lista_perfis
                             st.session_state.temp_user_name = user_db["nome_completo"]
@@ -137,7 +135,6 @@ def login_screen():
                     else:
                         st.error("Usuário ou senha incorretos.")
 
-# Inicializa variáveis de sessão
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
 
@@ -164,13 +161,10 @@ def buscar_dados_cep(cep):
 if not st.session_state.logged_in:
     login_screen()
 else:
-    # --- BARRA LATERAL (SIDEBAR) ---
     st.sidebar.title(f"👤 {st.session_state.user_name}")
     st.sidebar.caption(f"Perfil: {st.session_state.user_role}")
     
-    # Definição de Menus por Perfil
     opcoes_menu = []
-    
     role = st.session_state.user_role
     
     if role == "ADM":
@@ -198,8 +192,6 @@ else:
         st.title("🚌 Transporte Escolar - Solicitação")
         st.markdown("---")
 
-        # Se for Supervisor ou ADM visualizando a tela da escola, bloqueia campos
-        # Mas ADM pode querer testar, então vamos bloquear apenas Supervisor
         disable_widgets = True if role == "Supervisor" else False
         
         if disable_widgets:
@@ -220,7 +212,6 @@ else:
             c_cep, c_dummy = st.columns([1, 2])
             cep_aluno = c_cep.text_input("CEP Residencial", disabled=disable_widgets)
             
-            # Busca de CEP simplificada
             log_sugg = ""
             mun_sugg = ""
             if not disable_widgets and cep_aluno and len(cep_aluno) >= 8:
@@ -292,7 +283,6 @@ else:
     elif menu == "Supervisor (Avaliação)":
         st.title("📋 Painel do Supervisor")
         
-        # Filtra pendentes
         pendentes = pd.read_sql("SELECT id, nome_aluno FROM solicitacoes WHERE status='Pendente'", conn)
         
         if not pendentes.empty:
@@ -320,7 +310,6 @@ else:
                 st.markdown("---")
                 with st.form("valida_sup"):
                     st.markdown("#### Identificação e Parecer")
-                    # Se for supervisor, tenta pegar nome da sessão, senão deixa digitar
                     nome_padrao = st.session_state.user_name if role == "Supervisor" else ""
                     
                     nome_sup = st.text_input("Nome Supervisor", value=nome_padrao)
@@ -364,7 +353,6 @@ else:
             
         df = pd.read_sql(query, conn)
         
-        # Tabela Simples
         st.dataframe(df[['id', 'nome_aluno', 'nome_escola', 'status', 'empresa', 'supervisor_nome']])
         
         st.markdown("---")
@@ -373,13 +361,10 @@ else:
         registros = c.execute(query).fetchall()
         
         for reg in registros:
-            # Layout do Expander: Ícone + Nome + Empresa
             empresa_lbl = f" | 🏢 {reg['empresa']}" if reg['empresa'] else ""
             label = f"🆔 {reg['id']} - {reg['nome_aluno']} ({reg['status']}){empresa_lbl}"
             
             with st.expander(label):
-                
-                # --- ÁREA DE DOCUMENTOS ---
                 st.markdown("#### 📂 Documentos")
                 cd1, cd2, cd3 = st.columns(3)
                 if reg['arquivo_medico']: cd1.download_button("Ficha Médica", reg['arquivo_medico'], "med.pdf", key=f"dm{reg['id']}")
@@ -387,8 +372,6 @@ else:
                 if reg['arquivo_assinado']: cd3.download_button("Parecer Assinado", reg['arquivo_assinado'], "par.pdf", key=f"da{reg['id']}")
                 
                 st.markdown("---")
-                
-                # --- ÁREA DE EDIÇÃO ---
                 st.markdown("#### ✏️ Editar Informações")
                 with st.form(f"edit_{reg['id']}"):
                     ce1, ce2 = st.columns(2)
@@ -397,7 +380,6 @@ else:
                     
                     ce3, ce4 = st.columns(2)
                     new_escola = ce3.text_input("Escola", reg['nome_escola'])
-                    # NOVO CAMPO EMPRESA
                     new_empresa = ce4.text_input("🏢 Empresa Transportadora", value=reg['empresa'] if reg['empresa'] else "")
                     
                     c_save, c_del = st.columns([1, 4])
@@ -411,7 +393,6 @@ else:
                         time.sleep(1)
                         st.rerun()
 
-                # Botão de Excluir fora do form para evitar conflito de submit
                 if st.button(f"🗑️ Excluir Registro {reg['id']}", key=f"del_{reg['id']}"):
                     c.execute("DELETE FROM solicitacoes WHERE id=?", (reg['id'],))
                     conn.commit()
@@ -428,7 +409,6 @@ else:
         else:
             st.title("🔐 Gestão de Usuários")
             
-            # --- Formulário de Cadastro ---
             with st.expander("➕ Cadastrar Novo Usuário", expanded=True):
                 with st.form("new_user"):
                     u_nome = st.text_input("Nome Completo")
@@ -451,12 +431,10 @@ else:
                         else:
                             st.warning("Preencha todos os campos.")
             
-            # --- Lista de Usuários ---
             st.subheader("Usuários Cadastrados")
             users = pd.read_sql("SELECT id, nome_completo, username, perfis FROM usuarios", conn)
             st.dataframe(users)
             
-            # --- Exclusão Rápida ---
             st.markdown("#### Gerenciar")
             user_to_edit = st.selectbox("Selecione usuário para excluir:", users['username'])
             if st.button("Excluir Usuário Selecionado"):
@@ -470,5 +448,3 @@ else:
                     st.rerun()
 
     conn.close()
-
-
